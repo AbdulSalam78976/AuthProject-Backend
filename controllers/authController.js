@@ -150,8 +150,10 @@ const sendVerificationCode = async (req, res) => {
             });
         }
 
+        const email = req.body.email.trim();
+
         // 2. Find user
-        const user = await User.findOne({ email: req.body.email.trim() });
+        const user = await User.findOne({ email }).select('+verified');
         if (!user) {
             // Security: Generic response regardless of email existence
             return res.status(200).json({
@@ -167,18 +169,15 @@ const sendVerificationCode = async (req, res) => {
         }
 
         // 4. Generate secure verification code with HMAC
-        const verificationCode = Math.floor(100000 + Math.random() * 900000);
+        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
         const hmacSignature = await hash.generateHMAC(
-            verificationCode.toString(), 
+            verificationCode, 
             process.env.HMAC_SECRET
         );
 
         // 5. Save with expiration (15 minutes)
-        user.verification = {
-            code: verificationCode,
-            signature: hmacSignature,
-            expiresAt: new Date(Date.now() + 15 * 60 * 1000)
-        };
+        user.verificationCode = verificationCode;
+        user.verificationCodeValidation = new Date(Date.now() + 15 * 60 * 1000);
         await user.save();
 
         // 6. Send verification email
@@ -209,7 +208,12 @@ const sendVerificationCode = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Verification Error:', error);
+        console.error('Verification Error:', {
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+        });
+
         res.status(500).json({
             error: process.env.NODE_ENV === 'development'
                 ? `Verification failed: ${error.message}`
@@ -217,7 +221,6 @@ const sendVerificationCode = async (req, res) => {
         });
     }
 };
-
 const verifyVerificationCode = async (req, res) => {
     const { email, verificationCode } = req.body;
     
@@ -233,11 +236,11 @@ const verifyVerificationCode = async (req, res) => {
 
         // 2. Find user with verification data
         const user = await User.findOne({ email })
-            .select('+verification.code +verification.signature +verification.expiresAt +verified');
+            .select('+verificationCode +verificationCodeValidation +verified');
         
         if (!user) {
             return res.status(404).json({ 
-                error: 'Account not found or verification code expired' 
+                error: 'Account not found' 
             });
         }
 
@@ -245,7 +248,7 @@ const verifyVerificationCode = async (req, res) => {
         if (user.verified) {
             return res.status(409).json({ 
                 error: 'Email is already verified',
-                verifiedAt: user.updatedAt // When verification occurred
+                verifiedAt: user.updatedAt
             });
         }
 
@@ -257,36 +260,29 @@ const verifyVerificationCode = async (req, res) => {
             return res.status(400).json({ error: 'No pending verification found' });
         }
 
-        if (user.verification.code !== codeValue) {
+        if (user.verificationCode !== codeValue) {
             return res.status(401).json({ error: 'Invalid verification code' });
         }
 
-        if (user.verification.expiresAt < currentTime) {
-            return res.status(410).json({ error: 'Verification code expired' }); // 410 Gone
+        if (new Date(user.verificationCodeValidation) < currentTime) {
+            return res.status(410).json({ error: 'Verification code expired' });
         }
 
-        // 5. Cryptographic verification
-        const expectedSignature = await hash.generateHMAC(codeValue, process.env.HMAC_SECRET);
-        if (user.verification.signature !== expectedSignature) {
-            return res.status(403).json({ error: 'Invalid security signature' });
-        }
-
-        // 6. Mark as verified and clean up
+        // 5. Mark as verified and clean up
         user.verified = true;
         user.verifiedAt = currentTime;
         user.verificationCode = undefined;
-        user.verificationCodeValidation= undefined;
-        user.verification = undefined; // Remove verification data
+        user.verificationCodeValidation = undefined;
         await user.save();
 
-        // 7. Generate auth token (optional)
+        // 6. Generate auth token (optional)
         const authToken = jwt.sign(
             { userId: user._id },
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
 
-        // 8. Success response
+        // 7. Success response
         res.status(200).json({
             message: 'Email verified successfully',
             authToken,
