@@ -1,6 +1,6 @@
-import signupValidator from "../middlewares/signupValidator.js";
+import {signUpValidator, acceptCodeSchema} from "../middlewares/signupValidator.js";
 import loginValidator from "../middlewares/loginValidator.js";
-import User from "../models/userModel.js";
+import  User from "../models/userModel.js";
 import hash from "../Utils/hashing.js";
 import jwt from "jsonwebtoken";
 import sendMail from "../middlewares/sendMail.js";
@@ -13,7 +13,7 @@ import sendMail from "../middlewares/sendMail.js";
 let signUp = async (req, res) => {
     try {
         // 1. Validate request body
-        const { error } = signupValidator.validate(req.body);
+        const { error } = signUpValidator.validate(req.body);
         if (error) {
             return res.status(400).json({ 
                 error: error.details[0].message 
@@ -217,4 +217,98 @@ const sendVerificationCode = async (req, res) => {
         });
     }
 };
-export { signUp, logIn,logOut, sendVerificationCode };
+
+const verifyVerificationCode = async (req, res) => {
+    const { email, verificationCode } = req.body;
+    
+    try {
+        // 1. Input validation
+        const { error } = acceptCodeSchema.validate({ email, verificationCode });
+        if (error) {
+            return res.status(400).json({ 
+                error: error.details[0].message,
+                ...(process.env.NODE_ENV === 'development' && { details: error.details })
+            });
+        }
+
+        // 2. Find user with verification data
+        const user = await User.findOne({ email })
+            .select('+verification.code +verification.signature +verification.expiresAt +verified');
+        
+        if (!user) {
+            return res.status(404).json({ 
+                error: 'Account not found or verification code expired' 
+            });
+        }
+
+        // 3. Check verification status
+        if (user.verified) {
+            return res.status(409).json({ 
+                error: 'Email is already verified',
+                verifiedAt: user.updatedAt // When verification occurred
+            });
+        }
+
+        // 4. Verify all code conditions
+        const codeValue = verificationCode.toString();
+        const currentTime = new Date();
+        
+        if (!user.verificationCode) {
+            return res.status(400).json({ error: 'No pending verification found' });
+        }
+
+        if (user.verification.code !== codeValue) {
+            return res.status(401).json({ error: 'Invalid verification code' });
+        }
+
+        if (user.verification.expiresAt < currentTime) {
+            return res.status(410).json({ error: 'Verification code expired' }); // 410 Gone
+        }
+
+        // 5. Cryptographic verification
+        const expectedSignature = await hash.generateHMAC(codeValue, process.env.HMAC_SECRET);
+        if (user.verification.signature !== expectedSignature) {
+            return res.status(403).json({ error: 'Invalid security signature' });
+        }
+
+        // 6. Mark as verified and clean up
+        user.verified = true;
+        user.verifiedAt = currentTime;
+        user.verificationCode = undefined;
+        user.verificationCodeValidation= undefined;
+        user.verification = undefined; // Remove verification data
+        await user.save();
+
+        // 7. Generate auth token (optional)
+        const authToken = jwt.sign(
+            { userId: user._id },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        // 8. Success response
+        res.status(200).json({
+            message: 'Email verified successfully',
+            authToken,
+            user: {
+                _id: user._id,
+                name: user.name,
+                email: user.email
+            }
+        });
+
+    } catch (error) {
+        console.error('Verification Error:', {
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+        });
+
+        res.status(500).json({
+            error: process.env.NODE_ENV === 'development'
+                ? `Verification failed: ${error.message}`
+                : 'Could not complete verification'
+        });
+    }
+};
+export { signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode };

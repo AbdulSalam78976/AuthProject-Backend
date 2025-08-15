@@ -52,5 +52,7 @@ const userSchema = mongoose.Schema(
     { timestamps: true } // Adds createdAt and updatedAt automatically
 );
 
+
 const User = mongoose.model("User", userSchema);
+
 export default User;

@@ -44,4 +44,21 @@ const signUpValidator = joi.object({
   })
 });
 
-export default signUpValidator;
+const acceptCodeSchema = joi.object({
+  email: joi.string()
+    .email({ minDomainSegments: 2, tlds: { allow: ['com', 'net', 'org'] } })
+    .required()
+    .messages({
+      'string.empty': 'Email is required',
+      'string.email': 'Please enter a valid email address',
+      'any.required': 'Email is required'
+    }),
+  verificationCode: joi.string()
+    .required()
+    .messages({
+      'string.empty': 'Verification code is required',
+      'any.required': 'Verification code is required'
+    })
+});
+
+export { signUpValidator, acceptCodeSchema};
