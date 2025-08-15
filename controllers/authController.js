@@ -2,7 +2,8 @@ import signupValidator from "../middlewares/signupValidator.js";
 import loginValidator from "../middlewares/loginValidator.js";
 import User from "../models/userModel.js";
 import hash from "../Utils/hashing.js";
-
+import jwt from "jsonwebtoken";
+import sendMail from "../middlewares/sendMail.js";
 /**
  * Handles user registration
  * 1. Validates input using Joi
@@ -29,7 +30,7 @@ let signUp = async (req, res) => {
 
         //hashing password
 
-        const hashedPassword = await hash.hashPassword(req.body.password);
+        const hashedPassword = await hash.hashData(req.body.password);
         req.body.password = hashedPassword;
 
         // 3. Creating new user
@@ -86,7 +87,7 @@ const logIn = async (req, res) => {
         }
 
         // 4. Password validation
-        const isMatch = await hash.compare(req.body.password, user.password);
+        const isMatch = await hash.compareData(req.body.password, user.password);
         if (!isMatch) {
             return res.status(401).json({
                 error: 'Invalid Password' // Same message as email check
@@ -97,7 +98,7 @@ const logIn = async (req, res) => {
         const token = jwt.sign(
             { 
                 _id: user._id,
-                role: user.role // Add if you have roles
+                //role: user.role // Add if you have roles
             }, 
             process.env.JWT_SECRET,
             { expiresIn: '7d' } // Always set expiration
@@ -113,7 +114,7 @@ const logIn = async (req, res) => {
 
         // 7. Final response
         res.status(200).json({
-            _id: user._id,
+            token,
             name: user.name,
             email: user.email,
             verified: user.verified
@@ -127,4 +128,93 @@ const logIn = async (req, res) => {
         });
     }
 };
-export { signUp, logIn };
+
+const logOut = async (req, res) => {
+    try {
+        res.clearCookie('token');
+        res.status(200).json({ message: 'Logout successful' , });
+    } catch (error) {
+        console.error('Logout Error:', error);
+        res.status(500).json({ error: 'Logout failed' });
+    }
+};
+
+
+const sendVerificationCode = async (req, res) => {
+    try {
+        // 1. Input validation
+        const { error } = loginValidator.validate(req.body);
+        if (error) {
+            return res.status(400).json({ 
+                error: error.details[0].message 
+            });
+        }
+
+        // 2. Find user
+        const user = await User.findOne({ email: req.body.email.trim() });
+        if (!user) {
+            // Security: Generic response regardless of email existence
+            return res.status(200).json({
+                message: 'If this email exists, a verification code has been sent'
+            });
+        }
+
+        // 3. Skip if already verified
+        if (user.verified) {
+            return res.status(409).json({
+                error: 'Email is already verified'
+            });
+        }
+
+        // 4. Generate secure verification code with HMAC
+        const verificationCode = Math.floor(100000 + Math.random() * 900000);
+        const hmacSignature = await hash.generateHMAC(
+            verificationCode.toString(), 
+            process.env.HMAC_SECRET
+        );
+
+        // 5. Save with expiration (15 minutes)
+        user.verification = {
+            code: verificationCode,
+            signature: hmacSignature,
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000)
+        };
+        await user.save();
+
+        // 6. Send verification email
+        const emailResult = await sendMail(
+            user.email,
+            'Your Verification Code',
+            `Your verification code is: ${verificationCode}\nCode expires in 15 minutes.`,
+            `
+                <div>
+                    <h2>Your Verification Code</h2>
+                    <p style="font-size: 18px; font-weight: bold;">
+                        ${verificationCode}
+                    </p>
+                    <p>This code expires in 15 minutes.</p>
+                    <p>Or verify at: ${process.env.BASE_URL}/verify</p>
+                </div>
+            `
+        );
+
+        if (!emailResult || !emailResult.success) {
+            throw new Error('Failed to send verification email');
+        }
+
+        // 7. Respond successfully
+        res.status(200).json({
+            message: 'Verification code sent',
+            expiresIn: '15 minutes'
+        });
+
+    } catch (error) {
+        console.error('Verification Error:', error);
+        res.status(500).json({
+            error: process.env.NODE_ENV === 'development'
+                ? `Verification failed: ${error.message}`
+                : 'Could not process verification request'
+        });
+    }
+};
+export { signUp, logIn,logOut, sendVerificationCode };
