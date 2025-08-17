@@ -1,5 +1,5 @@
 import express from "express";
-import {signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword} from "../controllers/authController.js";
+import {signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword,sendForgetPasswordCode,verifyForgetPasswordCode} from "../controllers/authController.js";
 import identifier from "../middlewares/identification.js";
 const router = express.Router();
 
@@ -12,5 +12,7 @@ router.post('/logout', identifier,logOut);
 
 
 router.patch('/change-password',identifier, changePassword);
+router.patch('/reset-password/send-forgetPassword-code', sendForgetPasswordCode);
+router.patch('/reset-password/verify-forgetPassword-code', verifyForgetPasswordCode);
 
 export default router;

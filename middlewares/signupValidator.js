@@ -61,6 +61,35 @@ const acceptCodeSchema = joi.object({
     })
 });
 
+const acceptFPCodeSchema = joi.object({
+  email: joi.string()
+    .email({ minDomainSegments: 2, tlds: { allow: ['com', 'net', 'org'] } })
+    .required()
+    .messages({
+      'string.empty': 'Email is required',
+      'string.email': 'Please enter a valid email address',
+      'any.required': 'Email is required'
+    }),
+  forgetPasswordCode: joi.string()
+    .required()
+    .messages({
+      'string.empty': 'Verification code is required',
+      'any.required': 'Verification code is required'
+    }),
+    newPassword: joi.string()
+    .min(8)
+    .max(30)
+    .pattern(/^[a-zA-Z0-9]+$/)  // Removed RegExp constructor and quotes
+    .required()
+    .messages({
+      'string.empty': 'New password is required',
+      'string.min': 'New password should have at least {#limit} characters',
+      'string.max': 'New password should not exceed {#limit} characters',
+      'string.pattern.base': 'New password must contain only letters and numbers',
+      'any.required': 'New password is required'
+    })
+
+});
 
 const changePasswordSchema=joi.object({
   oldPassword: joi.string()
@@ -82,5 +111,14 @@ const changePasswordSchema=joi.object({
       'any.required': 'New password is required'
     })
 });
-
-export { signUpValidator, acceptCodeSchema, changePasswordSchema };
+const forgetPasswordValidator=joi.object({
+  email: joi.string()
+    .email({ minDomainSegments: 2, tlds: { allow: ['com', 'net', 'org'] } })
+    .required()
+    .messages({
+      'string.empty': 'Email is required',
+      'string.email': 'Please enter a valid email address',
+      'any.required': 'Email is required'
+    }),
+});
+export { signUpValidator, acceptCodeSchema, changePasswordSchema,acceptFPCodeSchema,forgetPasswordValidator };

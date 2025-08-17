@@ -1,4 +1,4 @@
-import {signUpValidator, acceptCodeSchema,changePasswordSchema} from "../middlewares/signupValidator.js";
+import {signUpValidator, acceptCodeSchema,changePasswordSchema,acceptFPCodeSchema,forgetPasswordValidator} from "../middlewares/signupValidator.js";
 import loginValidator from "../middlewares/loginValidator.js";
 import  User from "../models/userModel.js";
 import hash from "../Utils/hashing.js";
@@ -380,4 +380,208 @@ const verifyVerificationCode = async (req, res) => {
         });
     }
 };
-export { signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword };
+
+
+const sendForgetPasswordCode = async (req, res) => {
+    try {
+        // 1. Validate input
+        const { error } = forgetPasswordValidator.validate(req.body);
+        if (error) {
+            return res.status(400).json({ 
+                error: error.details[0].message 
+            });
+        }
+        const email = req.body.email.trim();
+
+        // 2. Find user
+        const user = await User.findOne({ email }).select('+verified');
+        if (!user) {
+            // Security: Generic response regardless of email existence
+            return res.status(200).json({
+                message: 'If this email exists, a password reset code has been sent'
+            });
+        }
+
+        // 3. Generate secure 6-digit code
+        const forgetPasswordCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const hmacSignature = await hash.generateHMAC(
+            forgetPasswordCode, 
+            process.env.HMAC_SECRET
+        );
+
+        // 4. Save with expiration (15 minutes)
+        user.forgetPasswordCode = forgetPasswordCode;
+        user.forgetPasswordCodeValidation = new Date(Date.now() + 15 * 60 * 1000);
+        await user.save();
+
+        // 5. Send password reset email
+        const emailResult = await sendMail(
+            user.email,
+            'Your Password Reset Code',
+            `Your password reset code is: ${forgetPasswordCode}\nCode expires in 15 minutes.`,
+            `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #333;">Password Reset Request</h2>
+                    <p>We received a request to reset your password. Here's your verification code:</p>
+                    <div style="background: #f5f5f5; padding: 20px; text-align: center; margin: 20px 0;">
+                        <p style="font-size: 24px; font-weight: bold; letter-spacing: 2px;">
+                            ${forgetPasswordCode}
+                        </p>
+                    </div>
+                    <p>This code will expire in 15 minutes.</p>
+                    <p>If you didn't request this, please ignore this email or contact support.</p>
+                    <p style="margin-top: 30px; font-size: 12px; color: #777;">
+                        For security reasons, please don't share this code with anyone.
+                    </p>
+                </div>
+            `
+        );
+
+        if (!emailResult?.success) {
+            throw new Error('Failed to send password reset email');
+        }
+
+        // 6. Respond successfully
+        res.status(200).json({
+            success: true,
+            message: 'Password reset code sent',
+            expiresIn: '15 minutes',
+            // Don't send the code in response for security
+        });
+
+    } catch (error) {
+        console.error('Password Reset Error:', {
+            error: error.message,
+            endpoint: 'sendForgetPasswordCode',
+            timestamp: new Date().toISOString(),
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+
+        res.status(500).json({
+            success: false,
+            error: process.env.NODE_ENV === 'development'
+                ? `Password reset failed: ${error.message}`
+                : 'Could not process password reset request'
+        });
+    }
+};
+
+
+const verifyForgetPasswordCode = async (req, res) => {
+    console.log(req.body);
+    const { email, forgetPasswordCode, newPassword } = req.body;
+    
+    try {
+       
+        const { error } = acceptFPCodeSchema.validate(req.body         
+       );
+        
+        if (error) {
+            return res.status(400).json({ 
+                success: false,
+                error: error.details[0].message,
+                ...(process.env.NODE_ENV === 'development' && { details: error.details })
+            });
+        }
+
+        // 2. Find user with password reset data
+        const user = await User.findOne({ email: email })
+            .select('+forgetPasswordCode +forgetPasswordCodeValidation +password');
+        
+        if (!user) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Account not found' 
+            });
+        }
+
+        // 3. Verify code exists
+        if (!user.forgetPasswordCode) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'No password reset request found for this email' 
+            });
+        }
+
+        // 4. Verify code matches
+        if (user.forgetPasswordCode !== forgetPasswordCode) {
+            return res.status(401).json({ 
+                success: false,
+                error: 'Invalid password reset code' 
+            });
+        }
+
+        // 5. Check code expiration
+        const currentTime = new Date();
+        if (currentTime > user.forgetPasswordCodeValidation) {
+            // Clean up expired code
+            user.forgetPasswordCode = undefined;
+            user.forgetPasswordCodeValidation = undefined;
+            await user.save();
+
+            return res.status(410).json({ 
+                success: false,
+                error: 'Password reset code has expired' 
+            });
+        }
+
+        // 6. Verify new password is different from old
+        const isSamePassword = await hash.compareData(newPassword, user.password);
+        if (isSamePassword) {
+            return res.status(400).json({
+                success: false,
+                error: 'New password must be different from current password'
+            });
+        }
+
+        // 7. Update password and clear reset fields
+        user.password = await hash.hashData(newPassword);
+        user.passwordChangedAt = currentTime;
+        user.forgetPasswordCode = undefined;
+        user.forgetPasswordCodeValidation = undefined;
+        await user.save();
+
+        // 8. Invalidate existing sessions (optional)
+        // user.sessionVersion = (user.sessionVersion || 0) + 1;
+        // await user.save();
+
+        // 9. Generate new auth token
+        const authToken = jwt.sign(
+            { userId: user._id },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        // 10. Clear any existing token cookies
+        res.clearCookie('token');
+
+        // 11. Success response
+        res.status(200).json({
+            success: true,
+            message: 'Password reset successfully',
+            authToken,
+            user: {
+                _id: user._id,
+                name: user.name,
+                email: user.email
+            }
+        });
+
+    } catch (error) {
+        console.error('Password Reset Error:', {
+            error: error.message,
+            endpoint: 'verifyForgetPasswordCode',
+            timestamp: new Date().toISOString(),
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+
+        res.status(500).json({
+            success: false,
+            error: process.env.NODE_ENV === 'development'
+                ? `Password reset failed: ${error.message}`
+                : 'Could not complete password reset'
+        });
+    }
+};
+
+export { signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword,sendForgetPasswordCode,verifyForgetPasswordCode};
