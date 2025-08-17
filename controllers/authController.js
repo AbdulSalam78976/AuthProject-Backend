@@ -1,4 +1,4 @@
-import {signUpValidator, acceptCodeSchema} from "../middlewares/signupValidator.js";
+import {signUpValidator, acceptCodeSchema,changePasswordSchema} from "../middlewares/signupValidator.js";
 import loginValidator from "../middlewares/loginValidator.js";
 import  User from "../models/userModel.js";
 import hash from "../Utils/hashing.js";
@@ -95,14 +95,20 @@ const logIn = async (req, res) => {
         }
 
         // 5. Token generation
-        const token = jwt.sign(
-            { 
-                _id: user._id,
-                //role: user.role // Add if you have roles
-            }, 
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' } // Always set expiration
-        );
+       // In your login controller
+// Where you create the token (login/signup)
+console.log('Creating token with payload:', {
+  userId: user._id,
+  verified: user.verified
+});
+
+const token = jwt.sign(
+  {
+    userId: user._id.toString() // Explicit conversion
+  },
+  process.env.JWT_SECRET,
+  { expiresIn: '1h' }
+);
 
         // 6. Set secure cookie
         res.cookie('token', token, {
@@ -307,4 +313,71 @@ const verifyVerificationCode = async (req, res) => {
         });
     }
 };
-export { signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode };
+
+    const changePassword = async (req, res) => {
+    try {
+        // Debugging: Verify incoming user object
+        console.log('Request User:', req.user);
+        
+        const userId = req.user.userId;
+        console.log('User ID:', userId);
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const { oldPassword, newPassword } = req.body;
+        
+        // Validate input
+        if (!oldPassword || !newPassword) {
+            return res.status(400).json({ error: 'Both passwords are required' });
+        }
+
+        // Find user with password explicitly selected
+        const user = await User.findById(req.user.userId).select('+password');
+        console.log('Found User:', user); // Debug
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User account not found' });
+        }
+
+        // Verify password exists
+        if (!user.password) {
+            return res.status(400).json({ 
+                error: 'This account has no password set' 
+            });
+        }
+
+        // Compare passwords
+        const isMatch = await hash.compareData(oldPassword, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
+        }
+
+        // Update password
+        user.password = await hash.hashData(newPassword);
+        user.passwordChangedAt = Date.now();
+        await user.save();
+
+        // Optional: Invalidate old tokens
+        res.clearCookie('token');
+
+        return res.status(200).json({ 
+            message: 'Password updated successfully',
+            // Optionally return a new token
+            token: jwt.sign(
+                { userId: user._id },
+                process.env.JWT_SECRET,
+                { expiresIn: '1h' }
+            )
+        });
+
+    } catch (error) {
+        console.error('Password Change Error:', error);
+        return res.status(500).json({ 
+            error: 'Password update failed',
+            ...(process.env.NODE_ENV === 'development' && { details: error.message })
+        });
+    }
+};
+export { signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword };

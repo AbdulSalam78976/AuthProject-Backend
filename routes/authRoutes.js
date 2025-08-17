@@ -1,13 +1,16 @@
 import express from "express";
-import {logIn, signUp, logOut, sendVerificationCode,verifyVerificationCode} from "../controllers/authController.js";
-
+import {signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword} from "../controllers/authController.js";
+import identifier from "../middlewares/identification.js";
 const router = express.Router();
 
 router.post('/register',signUp);
-router.post('/register/send-verification-code', sendVerificationCode);
-router.post('/register/verify-verification-code', verifyVerificationCode);
+router.patch('/register/send-verification-code', identifier,sendVerificationCode);
+router.patch('/register/verify-verification-code',identifier, verifyVerificationCode);
 
 router.post('/login', logIn);
-router.post('/logout', logOut);
+router.post('/logout', identifier,logOut);
+
+
+router.patch('/change-password',identifier, changePassword);
 
 export default router;

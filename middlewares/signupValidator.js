@@ -61,4 +61,26 @@ const acceptCodeSchema = joi.object({
     })
 });
 
-export { signUpValidator, acceptCodeSchema};
+
+const changePasswordSchema=joi.object({
+  oldPassword: joi.string()
+    .required()
+    .messages({
+      'string.empty': 'Old password is required',
+      'any.required': 'Old password is required'
+    }),
+  newPassword: joi.string()
+    .min(8)
+    .max(30)
+    .pattern(/^[a-zA-Z0-9]+$/)  // Removed RegExp constructor and quotes
+    .required()
+    .messages({
+      'string.empty': 'New password is required',
+      'string.min': 'New password should have at least {#limit} characters',
+      'string.max': 'New password should not exceed {#limit} characters',
+      'string.pattern.base': 'New password must contain only letters and numbers',
+      'any.required': 'New password is required'
+    })
+});
+
+export { signUpValidator, acceptCodeSchema, changePasswordSchema };
