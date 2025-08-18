@@ -1,7 +1,7 @@
 // authMiddleware.js
 import jwt from 'jsonwebtoken';
 
-const identifier = async (req, res, next) => {
+const authenticateUser = async (req, res, next) => {
     try {
         const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '');
         
@@ -28,4 +28,4 @@ const identifier = async (req, res, next) => {
     }
 };
 
-export default identifier;
+export default authenticateUser;

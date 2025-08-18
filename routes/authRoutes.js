@@ -1,17 +1,17 @@
 import express from "express";
 import {signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword,sendForgetPasswordCode,verifyForgetPasswordCode} from "../controllers/authController.js";
-import identifier from "../middlewares/identification.js";
+import authenticateUser from "../middlewares/authenticateUser.js";
 const router = express.Router();
 
 router.post('/register',signUp);
-router.patch('/register/send-verification-code', identifier,sendVerificationCode);
-router.patch('/register/verify-verification-code',identifier, verifyVerificationCode);
+router.patch('/register/send-verification-code', authenticateUser,sendVerificationCode);
+router.patch('/register/verify-verification-code', authenticateUser, verifyVerificationCode);
 
 router.post('/login', logIn);
-router.post('/logout', identifier,logOut);
+router.post('/logout', authenticateUser,logOut);
 
 
-router.patch('/change-password',identifier, changePassword);
+router.patch('/change-password', authenticateUser, changePassword);
 router.patch('/reset-password/send-forgetPassword-code', sendForgetPasswordCode);
 router.patch('/reset-password/verify-forgetPassword-code', verifyForgetPasswordCode);
 

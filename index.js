@@ -5,7 +5,7 @@ import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes.js";
-//import postRoutes from "./routes/postRoutes.js";
+import postRoutes from "./routes/postRoutes.js";
 // Load environment variables
 dotenv.config();
 
@@ -21,7 +21,7 @@ app.use(cors()); // Enable CORS (adjust for production)
 
 app.use("/api/auth", authRoutes); // Mount auth routes
 
-//app.use("/api/posts",postRoutes);
+app.use("/api/posts",postRoutes);
 
 // MongoDB Connection
 const MONGODB_URI = process.env.MONGODB_URI;
