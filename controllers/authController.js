@@ -23,35 +23,68 @@ let signUp = async (req, res) => {
         // 2. Check for duplicate email
         const existingUser = await User.findOne({ email: req.body.email });
         if (existingUser) {
-            return res.status(409).json({ // 409 Conflict is more appropriate
+            return res.status(409).json({
                 error: 'Email already registered' 
             });
         }
 
-        //hashing password
-
+        // 3. Hash password
         const hashedPassword = await hash.hashData(req.body.password);
         req.body.password = hashedPassword;
 
-        // 3. Creating new user
+        // 4. Create new user
         const user = new User(req.body);
+
+        // 5. Generate secure verification code
+        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+        user.verificationCode = verificationCode;
+        user.verificationCodeValidation = new Date(Date.now() + 15 * 60 * 1000); // 15 min expiry
+        user.verified = false;
+
         await user.save();
-        
-        // 4. Return response (excluding sensitive data)
-        res.status(201).json({ // 201 Created for successful creation
-            _id: user._id,
-            name: user.name,
-            email: user.email,
-            verified: user.verified
+
+        // 6. Send verification email
+        const emailResult = await sendMail(
+            user.email,
+            'Verify Your Account',
+            `Welcome to our platform!\n\nYour verification code is: ${verificationCode}\n\nIt expires in 15 minutes.`,
+            `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2>Welcome, ${user.name}!</h2>
+                    <p>Thank you for signing up. To activate your account, use the code below:</p>
+                    <div style="background: #f5f5f5; padding: 20px; text-align: center; margin: 20px 0;">
+                        <p style="font-size: 24px; font-weight: bold; letter-spacing: 2px;">
+                            ${verificationCode}
+                        </p>
+                    </div>
+                    <p>This code will expire in 15 minutes.</p>
+                    <p>If you didn’t create this account, you can ignore this email.</p>
+                </div>
+            `
+        );
+
+        if (!emailResult?.success) {
+            throw new Error('Failed to send verification email');
+        }
+
+        // 7. Return response (excluding sensitive fields)
+        res.status(201).json({
+            message: 'Registration successful. Verification code sent to your email.',
+            user: {
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                verified: user.verified
+            }
         });
 
     } catch (error) {
         console.error('Signup Error:', error);
-        res.status(500).json({ 
-            error: 'Registration failed. Please try again.' 
+        res.status(500).json({
+            error: 'Registration failed. Please try again.'
         });
     }
-}
+};
 
 /**
  * Handles user login
@@ -146,87 +179,6 @@ const logOut = async (req, res) => {
 };
 
 
-const sendVerificationCode = async (req, res) => {
-    try {
-        // 1. Input validation
-        const { error } = loginValidator.validate(req.body);
-        if (error) {
-            return res.status(400).json({ 
-                error: error.details[0].message 
-            });
-        }
-
-        const email = req.body.email.trim();
-
-        // 2. Find user
-        const user = await User.findOne({ email }).select('+verified');
-        if (!user) {
-            // Security: Generic response regardless of email existence
-            return res.status(200).json({
-                message: 'If this email exists, a verification code has been sent'
-            });
-        }
-
-        // 3. Skip if already verified
-        if (user.verified) {
-            return res.status(409).json({
-                error: 'Email is already verified'
-            });
-        }
-
-        // 4. Generate secure verification code with HMAC
-        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-        const hmacSignature = await hash.generateHMAC(
-            verificationCode, 
-            process.env.HMAC_SECRET
-        );
-
-        // 5. Save with expiration (15 minutes)
-        user.verificationCode = verificationCode;
-        user.verificationCodeValidation = new Date(Date.now() + 15 * 60 * 1000);
-        await user.save();
-
-        // 6. Send verification email
-        const emailResult = await sendMail(
-            user.email,
-            'Your Verification Code',
-            `Your verification code is: ${verificationCode}\nCode expires in 15 minutes.`,
-            `
-                <div>
-                    <h2>Your Verification Code</h2>
-                    <p style="font-size: 18px; font-weight: bold;">
-                        ${verificationCode}
-                    </p>
-                    <p>This code expires in 15 minutes.</p>
-                    <p>Or verify at: ${process.env.BASE_URL}/verify</p>
-                </div>
-            `
-        );
-
-        if (!emailResult || !emailResult.success) {
-            throw new Error('Failed to send verification email');
-        }
-
-        // 7. Respond successfully
-        res.status(200).json({
-            message: 'Verification code sent',
-            expiresIn: '15 minutes'
-        });
-
-    } catch (error) {
-        console.error('Verification Error:', {
-            error: error.message,
-            stack: error.stack,
-            timestamp: new Date().toISOString()
-        });
-
-        res.status(500).json({
-            error: process.env.NODE_ENV === 'development'
-                ? `Verification failed: ${error.message}`
-                : 'Could not process verification request'
-        });
-    }
-};
 const verifyVerificationCode = async (req, res) => {
     const { email, verificationCode } = req.body;
     
@@ -584,4 +536,4 @@ const verifyForgetPasswordCode = async (req, res) => {
     }
 };
 
-export { signUp, logIn,logOut, sendVerificationCode, verifyVerificationCode, changePassword,sendForgetPasswordCode,verifyForgetPasswordCode};
+export { signUp, logIn,logOut, verifyVerificationCode, changePassword,sendForgetPasswordCode,verifyForgetPasswordCode};
